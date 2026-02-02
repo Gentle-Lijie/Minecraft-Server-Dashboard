@@ -2,9 +2,9 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const si = require('systeminformation');
 const { Rcon } = require('rcon-client');
-const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const platform = require('./platform');
 
 // Load config
 const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf-8'));
@@ -47,26 +47,6 @@ function auth(req, res, next) {
   }
 }
 
-// Helper: run shell command via cmd.exe, decode GBK output
-function runCmd(command) {
-  return new Promise((resolve, reject) => {
-    exec(command, { timeout: 15000, encoding: 'buffer' }, (err, stdout, stderr) => {
-      const decode = buf => {
-        try {
-          const td = new TextDecoder('gbk');
-          return td.decode(buf).trim();
-        } catch {
-          return buf.toString('utf-8').trim();
-        }
-      };
-      const out = decode(stdout);
-      const errOut = decode(stderr);
-      if (err) return reject(new Error(errOut || out || err.message));
-      resolve(out);
-    });
-  });
-}
-
 // POST /api/login
 app.post('/api/login', (req, res) => {
   const { password } = req.body;
@@ -77,7 +57,7 @@ app.post('/api/login', (req, res) => {
   res.json({ token });
 });
 
-// GET /api/system — CPU, memory, disk, network, GPU
+// GET /api/system
 app.get('/api/system', auth, async (req, res) => {
   try {
     const [cpu, mem, disk, netStats, cpuTemp, osInfo, time, gpu] = await Promise.all([
@@ -136,38 +116,17 @@ app.get('/api/system', auth, async (req, res) => {
   }
 });
 
-// GET /api/mc/status — use sc query instead of nssm
+// GET /api/mc/status
 app.get('/api/mc/status', auth, async (req, res) => {
-  try {
-    const output = await runCmd(`sc query "${config.mcServiceName}"`);
-    const running = output.includes('RUNNING');
-    const stopped = output.includes('STOPPED');
-    const paused = output.includes('PAUSED');
-    res.json({
-      status: running ? 'running' : stopped ? 'stopped' : paused ? 'paused' : 'unknown',
-      raw: output,
-    });
-  } catch (e) {
-    res.json({ status: 'error', raw: e.message });
-  }
+  const result = await platform.getServiceStatus(config.mcServiceName);
+  res.json(result);
 });
-
-// Helper: run nssm action then check result with sc query
-async function nssmAction(action, expectState) {
-  // nssm may return exit code 1 if already in desired state, ignore errors
-  try { await runCmd(`nssm ${action} ${config.mcServiceName}`); } catch {}
-  // Wait a moment for state transition
-  await new Promise(r => setTimeout(r, 1000));
-  const status = await runCmd(`sc query "${config.mcServiceName}"`);
-  const reached = status.includes(expectState);
-  return { reached, raw: status };
-}
 
 // POST /api/mc/start
 app.post('/api/mc/start', auth, async (req, res) => {
   try {
-    const { reached } = await nssmAction('start', 'RUNNING');
-    res.json({ success: true, message: reached ? 'Service started' : 'Start command sent, waiting...' });
+    const result = await platform.startService(config.mcServiceName);
+    res.json(result);
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
   }
@@ -176,28 +135,19 @@ app.post('/api/mc/start', auth, async (req, res) => {
 // POST /api/mc/stop
 app.post('/api/mc/stop', auth, async (req, res) => {
   try {
-    const { reached } = await nssmAction('stop', 'STOPPED');
-    res.json({ success: true, message: reached ? 'Service stopped' : 'Stop command sent, waiting...' });
+    const result = await platform.stopService(config.mcServiceName);
+    res.json(result);
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
   }
 });
 
-// GET /api/processes — user processes only (filter system processes)
-const SYSTEM_PROCS = new Set([
-  'system idle process', 'system', 'registry', 'smss.exe', 'csrss.exe',
-  'wininit.exe', 'services.exe', 'lsass.exe', 'svchost.exe', 'dwm.exe',
-  'fontdrvhost.exe', 'winlogon.exe', 'lsaiso.exe', 'sgrmbroker.exe',
-  'memory compression', 'ntoskrnl.exe', 'secure system', 'spoolsv.exe',
-  'searchindexer.exe', 'msdtc.exe', 'dllhost.exe', 'wudfhost.exe',
-  'dashost.exe', 'sihost.exe', 'ctfmon.exe', 'conhost.exe',
-  'runtimebroker.exe', 'systemidleprocess',
-]);
+// GET /api/processes
 app.get('/api/processes', auth, async (req, res) => {
   try {
     const procs = await si.processes();
     const sorted = procs.list
-      .filter(p => p.pid > 4 && !SYSTEM_PROCS.has(p.name.toLowerCase()))
+      .filter(platform.filterProcess)
       .sort((a, b) => b.cpu - a.cpu)
       .slice(0, 30)
       .map(p => ({
@@ -214,12 +164,12 @@ app.get('/api/processes', auth, async (req, res) => {
   }
 });
 
-// POST /api/processes/kill — kill a process by PID
+// POST /api/processes/kill
 app.post('/api/processes/kill', auth, async (req, res) => {
   const { pid } = req.body;
   if (!pid) return res.status(400).json({ error: 'No PID provided' });
   try {
-    await runCmd(`taskkill /PID ${parseInt(pid)} /F`);
+    await platform.killProcess(pid);
     res.json({ success: true, message: `Process ${pid} killed` });
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
