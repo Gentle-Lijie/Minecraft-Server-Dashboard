@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MC Server Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --orange: #db6d28;
+    --purple: #bc8cff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* Login */
+  #login-overlay {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  #login-overlay.hidden { display: none; }
+  .login-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    width: 90%; max-width: 360px;
+    text-align: center;
+  }
+  .login-box h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: var(--accent); }
+  .login-box p { color: var(--text-dim); font-size: 0.8rem; margin-bottom: 1.5rem; }
+  .login-box input {
+    width: 100%; padding: 0.7rem;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text);
+    font-family: inherit; font-size: 0.9rem;
+    margin-bottom: 1rem;
+  }
+  .login-box input:focus { outline: none; border-color: var(--accent); }
+  .login-box button {
+    width: 100%; padding: 0.7rem;
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; font-family: inherit; font-size: 0.9rem;
+    cursor: pointer; font-weight: 600;
+  }
+  .login-box button:hover { opacity: 0.9; }
+  .login-error { color: var(--red); font-size: 0.8rem; margin-top: 0.5rem; }
+
+  /* Dashboard */
+  #dashboard { display: none; padding: 1rem; max-width: 1400px; margin: 0 auto; }
+  #dashboard.visible { display: block; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 1rem; padding-bottom: 0.8rem;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 1.1rem; color: var(--accent); }
+  header .info { color: var(--text-dim); font-size: 0.75rem; }
+  #btn-logout {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-dim); padding: 0.3rem 0.8rem;
+    border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 0.75rem;
+  }
+  #btn-logout:hover { border-color: var(--red); color: var(--red); }
+
+  /* Cards grid */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.8rem;
+    margin-bottom: 1rem;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+  }
+  .stat-card .label { color: var(--text-dim); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-card .value { font-size: 1.5rem; font-weight: 700; margin-top: 0.3rem; }
+  .stat-card .sub { color: var(--text-dim); font-size: 0.7rem; margin-top: 0.2rem; }
+
+  /* Bar */
+  .bar-container {
+    width: 100%; height: 6px;
+    background: var(--bg); border-radius: 3px;
+    margin-top: 0.5rem; overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%; border-radius: 3px;
+    transition: width 0.5s ease;
+  }
+
+  /* Charts */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 0.8rem;
+    margin-bottom: 1rem;
+  }
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+  }
+  .chart-card h3 { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 0.5rem; }
+  .chart-card canvas { width: 100% !important; height: 180px !important; }
+
+  /* MC Section */
+  .mc-section {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 0.8rem;
+    margin-bottom: 1rem;
+  }
+  .mc-status-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.2rem;
+  }
+  .mc-status-card h3 { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 1rem; }
+  .status-indicator {
+    display: flex; align-items: center; gap: 0.5rem;
+    font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem;
+  }
+  .status-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+  }
+  .status-dot.running { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .status-dot.stopped { background: var(--red); }
+  .status-dot.unknown, .status-dot.error { background: var(--yellow); }
+  .mc-buttons { display: flex; gap: 0.5rem; }
+  .mc-buttons button {
+    flex: 1; padding: 0.6rem;
+    border: 1px solid var(--border); border-radius: 6px;
+    font-family: inherit; font-size: 0.8rem; cursor: pointer;
+    font-weight: 600;
+  }
+  .btn-start { background: rgba(63,185,80,0.15); color: var(--green); }
+  .btn-start:hover { background: rgba(63,185,80,0.25); }
+  .btn-stop { background: rgba(248,81,73,0.15); color: var(--red); }
+  .btn-stop:hover { background: rgba(248,81,73,0.25); }
+
+  /* RCON Console */
+  .rcon-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.2rem;
+    display: flex; flex-direction: column;
+  }
+  .rcon-card h3 { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.8rem; }
+  .rcon-output {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.8rem;
+    font-size: 0.75rem;
+    min-height: 200px;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--green);
+    margin-bottom: 0.8rem;
+  }
+  .rcon-input-row {
+    display: flex; gap: 0.5rem;
+  }
+  .rcon-input-row input {
+    flex: 1; padding: 0.6rem;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text);
+    font-family: inherit; font-size: 0.8rem;
+  }
+  .rcon-input-row input:focus { outline: none; border-color: var(--accent); }
+  .rcon-input-row button {
+    padding: 0.6rem 1.2rem;
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; font-family: inherit; font-size: 0.8rem;
+    cursor: pointer; font-weight: 600;
+  }
+
+  /* Network & GPU cards */
+  .info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.8rem;
+    margin-bottom: 1rem;
+  }
+  .info-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.8rem;
+  }
+  .info-card .card-title { font-size: 0.75rem; color: var(--accent); margin-bottom: 0.4rem; font-weight: 600; }
+  .info-card .line { font-size: 0.7rem; color: var(--text-dim); margin-top: 0.15rem; }
+  .info-card .line span { color: var(--text); font-weight: 600; }
+
+  /* Process table */
+  .proc-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    overflow-x: auto;
+  }
+  .proc-card h3 { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.8rem; }
+  .proc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+  }
+  .proc-table th {
+    text-align: left;
+    color: var(--text-dim);
+    font-weight: 600;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  .proc-table th:hover { color: var(--accent); }
+  .proc-table th.sorted { color: var(--accent); }
+  .proc-table td {
+    padding: 0.35rem 0.6rem;
+    border-bottom: 1px solid rgba(48,54,61,0.4);
+    white-space: nowrap;
+  }
+  .proc-table tr:hover td { background: rgba(88,166,255,0.05); }
+  .proc-table .cpu-high { color: var(--red); font-weight: 600; }
+  .proc-table .cpu-med { color: var(--yellow); }
+  .btn-kill {
+    background: rgba(248,81,73,0.1); color: var(--red);
+    border: 1px solid rgba(248,81,73,0.3); border-radius: 4px;
+    padding: 0.15rem 0.5rem; cursor: pointer;
+    font-family: inherit; font-size: 0.65rem;
+  }
+  .btn-kill:hover { background: rgba(248,81,73,0.25); }
+
+  /* Section title */
+  .section-title {
+    font-size: 0.8rem; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin-bottom: 0.6rem; margin-top: 0.4rem;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .charts-grid { grid-template-columns: 1fr; }
+    .mc-section { grid-template-columns: 1fr; }
+    .chart-card canvas { height: 150px !important; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 480px) {
+    .stats-grid { grid-template-columns: 1fr; }
+    body { font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-overlay">
+  <div class="login-box">
+    <h1>MC Dashboard</h1>
+    <p>System Monitor & Server Control</p>
+    <input type="password" id="login-pw" placeholder="Password" autofocus>
+    <button onclick="doLogin()">Login</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<div id="dashboard">
+  <header>
+    <div>
+      <h1>MC Server Dashboard</h1>
+      <span class="info" id="sys-info"></span>
+    </div>
+    <button id="btn-logout" onclick="doLogout()">Logout</button>
+  </header>
+
+  <!-- Stats cards -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">CPU Usage</div>
+      <div class="value" id="cpu-val">--</div>
+      <div class="sub" id="cpu-temp"></div>
+      <div class="bar-container"><div class="bar-fill" id="cpu-bar" style="width:0%;background:var(--accent)"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Memory</div>
+      <div class="value" id="mem-val">--</div>
+      <div class="sub" id="mem-detail"></div>
+      <div class="bar-container"><div class="bar-fill" id="mem-bar" style="width:0%;background:var(--green)"></div></div>
+    </div>
+    <div class="stat-card" id="disk-card-0">
+      <div class="label">Disk</div>
+      <div class="value" id="disk-val">--</div>
+      <div class="sub" id="disk-detail"></div>
+      <div class="bar-container"><div class="bar-fill" id="disk-bar" style="width:0%;background:var(--orange)"></div></div>
+    </div>
+    <div class="stat-card" id="gpu-card" style="display:none">
+      <div class="label">GPU</div>
+      <div class="value" id="gpu-val">--</div>
+      <div class="sub" id="gpu-detail"></div>
+      <div class="bar-container"><div class="bar-fill" id="gpu-bar" style="width:0%;background:var(--purple)"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Uptime</div>
+      <div class="value" id="uptime-val">--</div>
+      <div class="sub" id="uptime-os"></div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3>CPU Load History</h3>
+      <canvas id="cpuChart"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Memory Usage History</h3>
+      <canvas id="memChart"></canvas>
+    </div>
+    <div class="chart-card" id="gpu-chart-card" style="display:none">
+      <h3>GPU Usage History</h3>
+      <canvas id="gpuChart"></canvas>
+    </div>
+  </div>
+
+  <!-- GPU details -->
+  <div id="gpu-section" style="display:none">
+    <div class="section-title">GPU</div>
+    <div class="info-grid" id="gpu-grid"></div>
+  </div>
+
+  <!-- Network -->
+  <div class="section-title">Network</div>
+  <div class="info-grid" id="net-grid"></div>
+
+  <!-- MC Server -->
+  <div class="section-title">Minecraft Server</div>
+  <div class="mc-section">
+    <div class="mc-status-card">
+      <h3>Service Status</h3>
+      <div class="status-indicator">
+        <div class="status-dot" id="mc-dot"></div>
+        <span id="mc-status-text">Checking...</span>
+      </div>
+      <div class="mc-buttons">
+        <button class="btn-start" onclick="mcAction('start')">Start</button>
+        <button class="btn-stop" onclick="mcAction('stop')">Stop</button>
+      </div>
+    </div>
+    <div class="rcon-card">
+      <h3>RCON Console</h3>
+      <div class="rcon-output" id="rcon-output">Ready.
+</div>
+      <div class="rcon-input-row">
+        <input type="text" id="rcon-cmd" placeholder="Enter command..." onkeydown="if(event.key==='Enter')sendRcon()">
+        <button onclick="sendRcon()">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Processes -->
+  <div class="proc-card">
+    <h3>Processes <span id="proc-total" style="color:var(--text-dim);font-weight:400"></span></h3>
+    <table class="proc-table">
+      <thead>
+        <tr>
+          <th data-sort="pid">PID</th>
+          <th data-sort="name">Name</th>
+          <th data-sort="cpu" class="sorted">CPU%</th>
+          <th data-sort="mem">MEM%</th>
+          <th data-sort="memRss">RSS</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="proc-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const API = '';
+let token = localStorage.getItem('mc_token');
+const MAX_POINTS = 60;
+const cpuHistory = [];
+const memHistory = [];
+const gpuHistory = [];
+const labels = [];
+let procSortKey = 'cpu';
+let procSortAsc = false;
+let procData = [];
+
+// Chart setup
+const chartOpts = () => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: { duration: 300 },
+  scales: {
+    x: { display: false },
+    y: { min: 0, max: 100, ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } }
+  },
+  plugins: { legend: { display: false } },
+  elements: { point: { radius: 0 }, line: { tension: 0.3, borderWidth: 2 } }
+});
+
+let cpuChart, memChart, gpuChart;
+
+function initCharts() {
+  cpuChart = new Chart(document.getElementById('cpuChart').getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets: [{ data: cpuHistory, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.1)', fill: true }] },
+    options: chartOpts()
+  });
+  memChart = new Chart(document.getElementById('memChart').getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets: [{ data: memHistory, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true }] },
+    options: chartOpts()
+  });
+  gpuChart = new Chart(document.getElementById('gpuChart').getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets: [{ data: gpuHistory, borderColor: '#bc8cff', backgroundColor: 'rgba(188,140,255,0.1)', fill: true }] },
+    options: chartOpts()
+  });
+}
+
+function formatBytes(b) {
+  if (b >= 1e12) return (b / 1e12).toFixed(1) + ' TB';
+  if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+  if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
+  if (b >= 1e3) return (b / 1e3).toFixed(1) + ' KB';
+  return b + ' B';
+}
+
+function formatSpeed(bps) {
+  if (bps < 0 || bps === null || bps === undefined) return '0 B/s';
+  if (bps >= 1e9) return (bps / 1e9).toFixed(1) + ' GB/s';
+  if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' MB/s';
+  if (bps >= 1e3) return (bps / 1e3).toFixed(1) + ' KB/s';
+  return Math.round(bps) + ' B/s';
+}
+
+function formatUptime(sec) {
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return d > 0 ? `${d}d ${h}h ${m}m` : `${h}h ${m}m`;
+}
+
+function barColor(pct) {
+  if (pct > 90) return 'var(--red)';
+  if (pct > 70) return 'var(--yellow)';
+  return null;
+}
+
+async function apiFetch(url, opts = {}) {
+  opts.headers = { ...opts.headers, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' };
+  const r = await fetch(API + url, opts);
+  if (r.status === 401) { doLogout(); throw new Error('Unauthorized'); }
+  return r.json();
+}
+
+// Login
+async function doLogin() {
+  const pw = document.getElementById('login-pw').value;
+  try {
+    const r = await fetch(API + '/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw })
+    });
+    const data = await r.json();
+    if (data.token) {
+      token = data.token;
+      localStorage.setItem('mc_token', token);
+      showDashboard();
+    } else {
+      document.getElementById('login-error').textContent = data.error || 'Login failed';
+    }
+  } catch (e) {
+    document.getElementById('login-error').textContent = 'Connection error';
+  }
+}
+
+function doLogout() {
+  token = null;
+  localStorage.removeItem('mc_token');
+  document.getElementById('login-overlay').classList.remove('hidden');
+  document.getElementById('dashboard').classList.remove('visible');
+}
+
+function showDashboard() {
+  document.getElementById('login-overlay').classList.add('hidden');
+  document.getElementById('dashboard').classList.add('visible');
+  initCharts();
+  fetchSystem();
+  fetchMcStatus();
+  fetchProcesses();
+  setInterval(fetchSystem, 2000);
+  setInterval(fetchMcStatus, 5000);
+  setInterval(fetchProcesses, 3000);
+}
+
+async function fetchSystem() {
+  try {
+    const d = await apiFetch('/api/system');
+
+    // CPU
+    document.getElementById('cpu-val').textContent = d.cpu.load.toFixed(1) + '%';
+    document.getElementById('cpu-bar').style.width = d.cpu.load + '%';
+    const bc = barColor(d.cpu.load);
+    if (bc) document.getElementById('cpu-bar').style.background = bc;
+    else document.getElementById('cpu-bar').style.background = 'var(--accent)';
+    document.getElementById('cpu-temp').textContent = d.cpu.temp ? `${d.cpu.temp}\u00B0C | ${d.cpu.cores.length} cores` : `${d.cpu.cores.length} cores`;
+
+    // Memory
+    document.getElementById('mem-val').textContent = d.memory.percent.toFixed(1) + '%';
+    document.getElementById('mem-bar').style.width = d.memory.percent + '%';
+    const mb = barColor(d.memory.percent);
+    if (mb) document.getElementById('mem-bar').style.background = mb;
+    else document.getElementById('mem-bar').style.background = 'var(--green)';
+    document.getElementById('mem-detail').textContent = `${formatBytes(d.memory.active)} / ${formatBytes(d.memory.total)}`;
+
+    // Disk — show all drives
+    if (d.disk.length > 0) {
+      const container = document.getElementById('disk-card-0').parentElement;
+      // Remove old dynamic disk cards
+      container.querySelectorAll('.disk-card-dynamic').forEach(el => el.remove());
+      // First disk uses the static card
+      const dd0 = d.disk[0];
+      document.getElementById('disk-val').textContent = dd0.percent.toFixed(1) + '%';
+      document.getElementById('disk-bar').style.width = dd0.percent + '%';
+      const db0 = barColor(dd0.percent);
+      document.getElementById('disk-bar').style.background = db0 || 'var(--orange)';
+      document.getElementById('disk-card-0').querySelector('.label').textContent = `Disk ${dd0.mount}`;
+      document.getElementById('disk-detail').textContent = `${formatBytes(dd0.used)} / ${formatBytes(dd0.size)}`;
+      // Additional disks
+      const ref = document.getElementById('disk-card-0');
+      for (let i = 1; i < d.disk.length; i++) {
+        const dd = d.disk[i];
+        const card = document.createElement('div');
+        card.className = 'stat-card disk-card-dynamic';
+        const dbc = barColor(dd.percent);
+        card.innerHTML = `
+          <div class="label">Disk ${dd.mount}</div>
+          <div class="value">${dd.percent.toFixed(1)}%</div>
+          <div class="sub">${formatBytes(dd.used)} / ${formatBytes(dd.size)}</div>
+          <div class="bar-container"><div class="bar-fill" style="width:${dd.percent}%;background:${dbc || 'var(--orange)'}"></div></div>
+        `;
+        ref.insertAdjacentElement('afterend', card);
+      }
+    }
+
+    // GPU
+    if (d.gpu && d.gpu.length > 0) {
+      const g = d.gpu.find(x => x.temperatureGpu) || d.gpu[0];
+      document.getElementById('gpu-card').style.display = '';
+      document.getElementById('gpu-chart-card').style.display = '';
+      const gpuUtil = g.utilizationGpu !== null && g.utilizationGpu !== undefined ? g.utilizationGpu : null;
+      if (gpuUtil !== null) {
+        document.getElementById('gpu-val').textContent = gpuUtil + '%';
+        document.getElementById('gpu-bar').style.width = gpuUtil + '%';
+        const gb = barColor(gpuUtil);
+        if (gb) document.getElementById('gpu-bar').style.background = gb;
+        else document.getElementById('gpu-bar').style.background = 'var(--purple)';
+        gpuHistory.push(gpuUtil);
+      } else {
+        document.getElementById('gpu-val').textContent = g.model || '--';
+        document.getElementById('gpu-bar').style.width = '0%';
+        gpuHistory.push(0);
+      }
+      if (gpuHistory.length > MAX_POINTS) gpuHistory.shift();
+      gpuChart.update();
+      const tempStr = g.temperatureGpu ? `${g.temperatureGpu}\u00B0C` : '';
+      const vramStr = g.memoryUsed && g.memoryTotal ? `${g.memoryUsed}/${g.memoryTotal} MB` : (g.vram ? `${g.vram} MB VRAM` : '');
+      document.getElementById('gpu-detail').textContent = [tempStr, vramStr].filter(Boolean).join(' | ');
+
+      // GPU section
+      document.getElementById('gpu-section').style.display = '';
+      document.getElementById('gpu-grid').innerHTML = d.gpu.map(g => `
+        <div class="info-card">
+          <div class="card-title">${g.model}</div>
+          <div class="line">Vendor: <span>${g.vendor || 'N/A'}</span></div>
+          ${g.utilizationGpu !== null && g.utilizationGpu !== undefined ? `<div class="line">GPU Load: <span>${g.utilizationGpu}%</span></div>` : ''}
+          ${g.temperatureGpu ? `<div class="line">Temp: <span>${g.temperatureGpu}\u00B0C</span></div>` : ''}
+          ${g.memoryUsed ? `<div class="line">VRAM: <span>${g.memoryUsed} / ${g.memoryTotal} MB</span></div>` : `<div class="line">VRAM: <span>${g.vram} MB</span></div>`}
+        </div>
+      `).join('');
+    }
+
+    // Uptime
+    document.getElementById('uptime-val').textContent = formatUptime(d.uptime);
+    document.getElementById('uptime-os').textContent = d.os;
+    document.getElementById('sys-info').textContent = d.os;
+
+    // Network
+    const netGrid = document.getElementById('net-grid');
+    netGrid.innerHTML = d.network.filter(n => n.rx_sec >= 0 || n.tx_sec >= 0).map(n => `
+      <div class="info-card">
+        <div class="card-title">${n.iface}</div>
+        <div class="line">\u2B07 <span>${formatSpeed(n.rx_sec)}</span>  \u2B06 <span>${formatSpeed(n.tx_sec)}</span></div>
+        <div class="line">Total: \u2B07 ${formatBytes(n.rx_bytes)}  \u2B06 ${formatBytes(n.tx_bytes)}</div>
+      </div>
+    `).join('');
+
+    // Charts
+    const now = new Date().toLocaleTimeString();
+    labels.push(now);
+    cpuHistory.push(d.cpu.load);
+    memHistory.push(d.memory.percent);
+    if (labels.length > MAX_POINTS) { labels.shift(); cpuHistory.shift(); memHistory.shift(); }
+    cpuChart.update();
+    memChart.update();
+  } catch (e) { /* ignore */ }
+}
+
+async function fetchProcesses() {
+  try {
+    const d = await apiFetch('/api/processes');
+    procData = d.processes;
+    document.getElementById('proc-total').textContent = `(${d.total} total)`;
+    renderProcesses();
+  } catch (e) { /* ignore */ }
+}
+
+function renderProcesses() {
+  const sorted = [...procData].sort((a, b) => {
+    const va = a[procSortKey], vb = b[procSortKey];
+    if (typeof va === 'string') return procSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    return procSortAsc ? va - vb : vb - va;
+  });
+
+  document.getElementById('proc-tbody').innerHTML = sorted.map(p => {
+    const cpuClass = p.cpu > 50 ? 'cpu-high' : p.cpu > 10 ? 'cpu-med' : '';
+    return `<tr>
+      <td>${p.pid}</td>
+      <td>${p.name}</td>
+      <td class="${cpuClass}">${p.cpu.toFixed(1)}</td>
+      <td>${p.mem.toFixed(1)}</td>
+      <td>${formatBytes((p.memRss || 0) * 1024)}</td>
+      <td><button class="btn-kill" onclick="killProc(${p.pid},'${p.name.replace(/'/g,"\\'")}')">Kill</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// Sort columns
+document.querySelectorAll('.proc-table th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.sort;
+    if (procSortKey === key) { procSortAsc = !procSortAsc; }
+    else { procSortKey = key; procSortAsc = false; }
+    document.querySelectorAll('.proc-table th').forEach(h => h.classList.remove('sorted'));
+    th.classList.add('sorted');
+    renderProcesses();
+  });
+});
+
+async function killProc(pid, name) {
+  if (!confirm(`Kill process ${name} (PID: ${pid})?`)) return;
+  try {
+    const d = await apiFetch('/api/processes/kill', { method: 'POST', body: JSON.stringify({ pid }) });
+    appendRcon(`[System] ${d.message || 'Kill sent'}`);
+    setTimeout(fetchProcesses, 1000);
+  } catch (e) {
+    appendRcon(`[Error] ${e.message}`);
+  }
+}
+
+async function fetchMcStatus() {
+  try {
+    const d = await apiFetch('/api/mc/status');
+    const dot = document.getElementById('mc-dot');
+    const text = document.getElementById('mc-status-text');
+    dot.className = 'status-dot ' + d.status;
+    const labels = { running: 'Running', stopped: 'Stopped', paused: 'Paused', error: 'Error', unknown: 'Unknown' };
+    text.textContent = labels[d.status] || d.status;
+  } catch (e) { /* ignore */ }
+}
+
+async function mcAction(action) {
+  try {
+    const d = await apiFetch('/api/mc/' + action, { method: 'POST' });
+    appendRcon(`[System] ${action}: ${d.success ? 'OK' : (d.message || 'Failed')}`);
+  } catch (e) {
+    appendRcon(`[Error] ${e.message}`);
+  }
+  // Refresh status multiple times to catch the transition
+  fetchMcStatus();
+  setTimeout(fetchMcStatus, 1500);
+  setTimeout(fetchMcStatus, 4000);
+}
+
+async function sendRcon() {
+  const input = document.getElementById('rcon-cmd');
+  const cmd = input.value.trim();
+  if (!cmd) return;
+  input.value = '';
+  appendRcon(`> ${cmd}`);
+  try {
+    const d = await apiFetch('/api/mc/rcon', { method: 'POST', body: JSON.stringify({ command: cmd }) });
+    if (d.response !== undefined) {
+      appendRcon(d.response || '(empty response)');
+    } else {
+      appendRcon(`[Error] ${d.error}`);
+    }
+  } catch (e) {
+    appendRcon(`[Error] ${e.message}`);
+  }
+}
+
+function appendRcon(text) {
+  const el = document.getElementById('rcon-output');
+  el.textContent += text + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+// Init
+document.getElementById('login-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+if (token) {
+  fetch(API + '/api/system', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => { if (r.ok) showDashboard(); else doLogout(); })
+    .catch(() => doLogout());
+}
+</script>
+</body>
+</html>

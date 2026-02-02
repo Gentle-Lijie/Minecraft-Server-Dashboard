@@ -1,0 +1,12 @@
+{
+  "dashboardPort": 25566,
+  "password": "your-dashboard-password",
+  "jwtSecret": "change-this-to-a-random-string",
+  "rcon": {
+    "host": "127.0.0.1",
+    "port": 25575,
+    "password": "your-rcon-password"
+  },
+  "mcServiceName": "MC",
+  "serverPropertiesPath": "/path/to/your/server.properties"
+}
